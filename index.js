@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const httpServer = require('http').createServer();
 const io = require('socket.io')(httpServer);
 
+const messageStore = require('./store');
+
 const port = process.env.PORT || 80;
 
 io.use((socket, next) => {
@@ -13,10 +15,8 @@ io.use((socket, next) => {
     jwt.verify(token, process.env.JWT_SECRET, {}, (err, decoded) => {
       if (!err) {
         socket.handshake.auth.user = {
+          id: decoded.id,
           username: decoded.username,
-          firstName: decoded.firstName,
-          lastName: decoded.lastName,
-          iconPath: decoded.iconPath,
         };
       }
       next();
@@ -30,11 +30,26 @@ io.on('connection', (socket) => {
   const { user, room } = socket.handshake.auth;
   socket.leave(socket.id); // leaving default room
   socket.join(room);
+  socket.emit('live count', io.sockets.adapter.rooms.get(room).size);
+
+  if (messageStore.getMessages(room)) {
+    socket.emit('old messages', messageStore.getMessages(room));
+  }
   if (!user) return;
 
-  socket.on('message', (message) => {
-    io.to(room).emit('broadcast', { user: user, message: message });
+  socket.on('message', (msg) => {
+    if (typeof msg !== 'string') return;
+    const message = { timestamp: Date.now(), user: user, message: msg };
+    messageStore.pushMessage(room, message);
+    io.to(room).emit('new message', message);
   });
+
+  // socket.on('disconnecting', () => {
+  //   // remove meessages when the last one left the room
+  //   if (io.sockets.adapter.rooms.get(room).size === 1) {
+  //     messageStore.removeRoomFromStore(room);
+  //   }
+  // });
 });
 
 httpServer.listen(port, (err) => {
