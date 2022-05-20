@@ -15,50 +15,48 @@ const redisClient = redis.createClient({
 });
 
 io.use((socket, next) => {
+  // Kiểm tra ràng buộc đầu vào
   if (!socket.handshake.auth) next(new Error('invalid connection'));
   const { token, room } = socket.handshake.auth;
   if (!room) next(new Error('invalid connection'));
   if (!token) next();
 
+  // Xác thực người dùng
   jwt.verify(token, process.env.JWT_SECRET, {}, (err, decoded) => {
-    if (err) return next();
-
-    redisClient.get(token, (err, reply) => {
-      if (!err && reply === null) {
-        socket.handshake.auth.user = {
-          id: decoded.id,
-          username: decoded.username,
-        };
-      }
-      next();
-    });
+    if (!err) {
+      socket.handshake.auth.user = {
+        id: decoded.id,
+        username: decoded.username,
+      };
+    }
+    next();
   });
 });
 
 io.on('connection', (socket) => {
   const { user, room } = socket.handshake.auth;
-  socket.leave(socket.id); // leaving default room
-  socket.join(room);
-  socket.emit('live count', io.sockets.adapter.rooms.get(room).size);
+  socket.leave(socket.id); // Thoát khỏi phòng mặc đinh của Socket.IO quy định
+  socket.join(room); // Tham gia phòng chat của livestream
+  // Gửi về số lượng người đang tham gia
+  socket.emit('live count', io.sockets.adapter.rooms.get(room).size); 
 
+  // Gửi về những tin nhắn cũ
   if (messageStore.getMessages(room)) {
     socket.emit('old messages', messageStore.getMessages(room));
   }
+  // Người dùng chưa đăng nhập không thể gửi tin nhắn
   if (!user) return;
-
+  // Xử lý người dùng gửi tin nhắn
   socket.on('message', (msg) => {
     if (typeof msg !== 'string') return;
+    // Tạo và định danh tin nhắn
     const message = { timestamp: Date.now(), user: user, message: msg };
+    // Lưu tin nhắn vào bộ nhớ, nhằm hiển thị tin nhắn cũ
     messageStore.pushMessage(room, message);
+    // Gửi tin nhắn tới tất cả những người khác trong phòng
     io.to(room).emit('new message', message);
   });
 
-  // socket.on('disconnecting', () => {
-  //   // remove meessages when the last one left the room
-  //   if (io.sockets.adapter.rooms.get(room).size === 1) {
-  //     messageStore.removeRoomFromStore(room);
-  //   }
-  // });
 });
 
 httpServer.listen(port, (err) => {
